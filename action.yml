@@ -1,0 +1,141 @@
+# version: 0.1.0
+name: 'Deploy to Zoneploy'
+description: 'Build, push and deploy your app to Zoneploy. Supports Docker containers and Docker Compose stacks.'
+
+inputs:
+  token:
+    description: 'Zoneploy deploy token'
+    required: true
+  dockerfile:
+    description: 'Path to Dockerfile (relative to repo root)'
+    required: false
+    default: 'Dockerfile'
+  compose-file:
+    description: 'Path to Docker Compose file (relative to repo root)'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # ── Auto-detect: container or stack ─────────────────────────────────────
+
+    - name: Detect deploy type
+      id: detect
+      shell: bash
+      run: |
+        # If the user specified a compose file, use it directly
+        if [ -n "${{ inputs.compose-file }}" ]; then
+          if [ ! -f "${{ inputs.compose-file }}" ]; then
+            echo "::error::Compose file not found: ${{ inputs.compose-file }}"
+            exit 1
+          fi
+          echo "type=stack"                              >> "$GITHUB_OUTPUT"
+          echo "compose_file=${{ inputs.compose-file }}" >> "$GITHUB_OUTPUT"
+          echo "Detected: Stack → ${{ inputs.compose-file }}"
+
+        # Auto-detect compose
+        elif [ -f "docker-compose.yml" ]; then
+          echo "type=stack"                      >> "$GITHUB_OUTPUT"
+          echo "compose_file=docker-compose.yml" >> "$GITHUB_OUTPUT"
+          echo "Detected: Stack → docker-compose.yml"
+        elif [ -f "docker-compose.yaml" ]; then
+          echo "type=stack"                       >> "$GITHUB_OUTPUT"
+          echo "compose_file=docker-compose.yaml" >> "$GITHUB_OUTPUT"
+          echo "Detected: Stack → docker-compose.yaml"
+
+        # Dockerfile (custom or default)
+        elif [ -f "${{ inputs.dockerfile }}" ]; then
+          echo "type=container"                       >> "$GITHUB_OUTPUT"
+          echo "dockerfile=${{ inputs.dockerfile }}"  >> "$GITHUB_OUTPUT"
+          echo "Detected: Container → ${{ inputs.dockerfile }}"
+
+        else
+          echo "::error::No deploy file found. Make sure a Dockerfile or docker-compose.yml exists, or set the 'dockerfile' / 'compose-file' inputs."
+          exit 1
+        fi
+
+    # ── Get registry credentials from Zoneploy ──────────────────────────────
+
+    - name: Get registry credentials
+      id: registry
+      shell: bash
+      run: |
+        RESPONSE=$(curl -sf -X POST "https://api.zoneploy.com/api/v1/deploy/registry-auth" \
+          -H "Authorization: Bearer ${{ inputs.token }}" \
+          -H "Content-Type: application/json" \
+          -d "{\"type\": \"${{ steps.detect.outputs.type }}\"}")
+
+        if [ $? -ne 0 ]; then
+          echo "::error::Invalid token or failed to connect to Zoneploy"
+          exit 1
+        fi
+
+        REGISTRY=$(echo "$RESPONSE" | jq -r '.registry')
+        USERNAME=$(echo "$RESPONSE" | jq -r '.username')
+        PASSWORD=$(echo "$RESPONSE" | jq -r '.password')
+        NAMESPACE=$(echo "$RESPONSE" | jq -r '.namespace')
+        DEPLOY_ID=$(echo "$RESPONSE" | jq -r '.deployId')
+
+        echo "::add-mask::$PASSWORD"
+
+        echo "registry=$REGISTRY"   >> "$GITHUB_OUTPUT"
+        echo "username=$USERNAME"   >> "$GITHUB_OUTPUT"
+        echo "password=$PASSWORD"   >> "$GITHUB_OUTPUT"
+        echo "namespace=$NAMESPACE" >> "$GITHUB_OUTPUT"
+        echo "deploy_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
+
+    - name: Login to Zoneploy Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ steps.registry.outputs.registry }}
+        username: ${{ steps.registry.outputs.username }}
+        password: ${{ steps.registry.outputs.password }}
+
+    # ── Container ────────────────────────────────────────────────────────────
+
+    - name: Build & push container image
+      if: steps.detect.outputs.type == 'container'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ${{ steps.detect.outputs.dockerfile }}
+        push: true
+        tags: ${{ steps.registry.outputs.namespace }}:${{ github.sha }}
+
+    - name: Deploy container
+      if: steps.detect.outputs.type == 'container'
+      shell: bash
+      run: |
+        RESPONSE=$(curl -sf -X POST "https://api.zoneploy.com/api/v1/deploy" \
+          -H "Authorization: Bearer ${{ inputs.token }}" \
+          -H "Content-Type: application/json" \
+          -d "$(jq -n \
+            --arg image "${{ steps.registry.outputs.namespace }}:${{ github.sha }}" \
+            '{image: $image}')")
+
+        echo "Deploy started: $(echo "$RESPONSE" | jq -r '.deployUrl // .message // "ok"')"
+
+    # ── Stack ────────────────────────────────────────────────────────────────
+
+    - name: Build & push stack images
+      if: steps.detect.outputs.type == 'stack'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/build-stack.sh"
+      env:
+        ZP_NAMESPACE: ${{ steps.registry.outputs.namespace }}
+        ZP_SHA: ${{ github.sha }}
+        ZP_COMPOSE_FILE: ${{ steps.detect.outputs.compose_file }}
+
+    - name: Deploy stack
+      if: steps.detect.outputs.type == 'stack'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/deploy-stack.sh"
+      env:
+        ZP_TOKEN: ${{ inputs.token }}
+        ZP_DEPLOY_ID: ${{ steps.registry.outputs.deploy_id }}
+        ZP_SHA: ${{ github.sha }}
+        ZP_COMPOSE_FILE: ${{ steps.detect.outputs.compose_file }}
