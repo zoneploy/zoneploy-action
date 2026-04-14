@@ -68,7 +68,7 @@ runs:
       id: registry
       shell: bash
       run: |
-        RESPONSE=$(curl -sf -X POST "${{ inputs.api-url }}/api/v1/deploy/registry-auth" \
+        RESPONSE=$(curl -sf -X POST "${{ inputs.api-url }}/api/v1/registry/registry-auth" \
           -H "Authorization: Bearer ${{ inputs.token }}" \
           -H "Content-Type: application/json" \
           -d "{\"type\": \"${{ steps.detect.outputs.type }}\"}" \
