@@ -14,6 +14,10 @@ inputs:
     description: 'Path to Docker Compose file (relative to repo root)'
     required: false
     default: ''
+  api-url:
+    description: 'Zoneploy API URL (override for self-hosted or dev instances)'
+    required: false
+    default: 'https://api.zoneploy.com'
 
 runs:
   using: composite
@@ -64,7 +68,7 @@ runs:
       id: registry
       shell: bash
       run: |
-        RESPONSE=$(curl -sf -X POST "https://api.zoneploy.com/api/v1/deploy/registry-auth" \
+        RESPONSE=$(curl -sf -X POST "${{ inputs.api-url }}/api/v1/deploy/registry-auth" \
           -H "Authorization: Bearer ${{ inputs.token }}" \
           -H "Content-Type: application/json" \
           -d "{\"type\": \"${{ steps.detect.outputs.type }}\"}")
@@ -110,7 +114,7 @@ runs:
       if: steps.detect.outputs.type == 'container'
       shell: bash
       run: |
-        RESPONSE=$(curl -sf -X POST "https://api.zoneploy.com/api/v1/deploy" \
+        RESPONSE=$(curl -sf -X POST "${{ inputs.api-url }}/api/v1/deploy" \
           -H "Authorization: Bearer ${{ inputs.token }}" \
           -H "Content-Type: application/json" \
           -d "$(jq -n \
@@ -136,6 +140,7 @@ runs:
       run: bash "${{ github.action_path }}/scripts/deploy-stack.sh"
       env:
         ZP_TOKEN: ${{ inputs.token }}
+        ZP_API_URL: ${{ inputs.api-url }}
         ZP_DEPLOY_ID: ${{ steps.registry.outputs.deploy_id }}
         ZP_SHA: ${{ github.sha }}
         ZP_COMPOSE_FILE: ${{ steps.detect.outputs.compose_file }}

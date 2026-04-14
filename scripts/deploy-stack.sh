@@ -10,7 +10,7 @@ if [ ! -f "$CLEAN_COMPOSE" ]; then
   exit 1
 fi
 
-RESPONSE=$(curl -sf -X POST "https://api.zoneploy.com/api/v1/deploy" \
+RESPONSE=$(curl -sf -X POST "${ZP_API_URL}/api/v1/deploy" \
   -H "Authorization: Bearer ${ZP_TOKEN}" \
   -H "Content-Type: application/json" \
   -d "$(jq -n \
