@@ -71,18 +71,22 @@ runs:
         RESPONSE=$(curl -sf -X POST "${{ inputs.api-url }}/api/v1/deploy/registry-auth" \
           -H "Authorization: Bearer ${{ inputs.token }}" \
           -H "Content-Type: application/json" \
-          -d "{\"type\": \"${{ steps.detect.outputs.type }}\"}")
+          -d "{\"type\": \"${{ steps.detect.outputs.type }}\"}" \
+          -w "\n%{http_code}" 2>&1) || true
 
-        if [ $? -ne 0 ]; then
-          echo "::error::Invalid token or failed to connect to Zoneploy"
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+        BODY=$(echo "$RESPONSE" | head -n -1)
+
+        if [ "$HTTP_CODE" != "200" ]; then
+          echo "::error::Zoneploy API error (HTTP $HTTP_CODE): $BODY"
           exit 1
         fi
 
-        REGISTRY=$(echo "$RESPONSE" | jq -r '.registry')
-        USERNAME=$(echo "$RESPONSE" | jq -r '.username')
-        PASSWORD=$(echo "$RESPONSE" | jq -r '.password')
-        NAMESPACE=$(echo "$RESPONSE" | jq -r '.namespace')
-        DEPLOY_ID=$(echo "$RESPONSE" | jq -r '.deployId')
+        REGISTRY=$(echo "$BODY" | jq -r '.registry')
+        USERNAME=$(echo "$BODY" | jq -r '.username')
+        PASSWORD=$(echo "$BODY" | jq -r '.password')
+        NAMESPACE=$(echo "$BODY" | jq -r '.namespace')
+        DEPLOY_ID=$(echo "$BODY" | jq -r '.deployId')
 
         echo "::add-mask::$PASSWORD"
 
