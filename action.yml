@@ -68,14 +68,37 @@ runs:
       id: registry
       shell: bash
       run: |
-        RESPONSE=$(curl -sf -X POST "${{ inputs.api-url }}/api/v1/registry/registry-auth" \
+        BODY_FILE=$(mktemp)
+        STDERR_FILE=$(mktemp)
+
+        HTTP_CODE=$(curl -sS -X POST "${{ inputs.api-url }}/api/v1/registry/registry-auth" \
           -H "Authorization: Bearer ${{ inputs.token }}" \
           -H "Content-Type: application/json" \
           -d "{\"type\": \"${{ steps.detect.outputs.type }}\"}" \
-          -w "\n%{http_code}" 2>&1) || true
+          -o "$BODY_FILE" \
+          -w "%{http_code}" 2>"$STDERR_FILE")
+        CURL_EXIT=$?
 
-        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-        BODY=$(echo "$RESPONSE" | head -n -1)
+        BODY=$(cat "$BODY_FILE")
+        CURL_ERROR=$(cat "$STDERR_FILE")
+
+        rm -f "$BODY_FILE" "$STDERR_FILE"
+
+        if [ "$CURL_EXIT" -ne 0 ]; then
+          echo "::error::Could not reach Zoneploy API at ${{ inputs.api-url }} (curl exit $CURL_EXIT)."
+          if [ -n "$CURL_ERROR" ]; then
+            echo "::error::$CURL_ERROR"
+          fi
+
+          case "$CURL_EXIT" in
+            6)  echo "::error::Likely DNS resolution failure. Check that the api-url host exists and is publicly resolvable." ;;
+            7)  echo "::error::Likely connection failure. Check that the host is reachable and the service is listening." ;;
+            28) echo "::error::Connection timed out. Check public network access, proxying, and firewall rules." ;;
+            35|60) echo "::error::TLS/SSL failure. Check the certificate chain and HTTPS configuration." ;;
+          esac
+
+          exit 1
+        fi
 
         if [ "$HTTP_CODE" != "200" ]; then
           if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
@@ -124,16 +147,39 @@ runs:
       if: steps.detect.outputs.type == 'container'
       shell: bash
       run: |
-        RESPONSE=$(curl -s -X POST "${{ inputs.api-url }}/api/v1/deploy" \
+        BODY_FILE=$(mktemp)
+        STDERR_FILE=$(mktemp)
+
+        HTTP_CODE=$(curl -sS -X POST "${{ inputs.api-url }}/api/v1/deploy" \
           -H "Authorization: Bearer ${{ inputs.token }}" \
           -H "Content-Type: application/json" \
           -d "$(jq -n \
             --arg image "${{ steps.registry.outputs.namespace }}:${{ github.sha }}" \
             '{image: $image}')" \
-          -w "\n%{http_code}") || true
+          -o "$BODY_FILE" \
+          -w "%{http_code}" 2>"$STDERR_FILE")
+        CURL_EXIT=$?
 
-        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-        BODY=$(echo "$RESPONSE" | head -n -1)
+        BODY=$(cat "$BODY_FILE")
+        CURL_ERROR=$(cat "$STDERR_FILE")
+
+        rm -f "$BODY_FILE" "$STDERR_FILE"
+
+        if [ "$CURL_EXIT" -ne 0 ]; then
+          echo "::error::Could not reach Zoneploy deploy endpoint at ${{ inputs.api-url }}/api/v1/deploy (curl exit $CURL_EXIT)."
+          if [ -n "$CURL_ERROR" ]; then
+            echo "::error::$CURL_ERROR"
+          fi
+
+          case "$CURL_EXIT" in
+            6)  echo "::error::Likely DNS resolution failure. Check that the api-url host exists and is publicly resolvable." ;;
+            7)  echo "::error::Likely connection failure. Check that the host is reachable and the service is listening." ;;
+            28) echo "::error::Connection timed out. Check public network access, proxying, and firewall rules." ;;
+            35|60) echo "::error::TLS/SSL failure. Check the certificate chain and HTTPS configuration." ;;
+          esac
+
+          exit 1
+        fi
 
         if [ "$HTTP_CODE" != "202" ]; then
           if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
