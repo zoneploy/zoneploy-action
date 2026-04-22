@@ -27,7 +27,7 @@ jobs:
 For development:
 
 ```yaml
-- uses: zoneploy/zoneploy-action@development
+- uses: zoneploy/zoneploy-action@main
   with:
     api-url: https://api.dev.zoneploy.com/api/v1
     deploy-token: ${{ secrets.ZP_DEPLOY_TOKEN }}
